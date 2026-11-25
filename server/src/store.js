@@ -48,7 +48,7 @@ export function newPairCode(sid) {
   for (const [c, v] of Object.entries(state.pairCodes)) if (v.sid === sid || v.exp < Date.now()) delete state.pairCodes[c]
   let code
   do { code = String(crypto.randomInt(0, 1e6)).padStart(6, '0') } while (state.pairCodes[code])
-  state.pairCodes[code] = { sid, exp: Date.now() + 10 * 60_000 }
+  state.pairCodes[code] = { sid, exp: Date.now() + Number(process.env.SETTLE_PAIR_TTL_MIN || 10) * 60_000 }
   save()
   return code
 }

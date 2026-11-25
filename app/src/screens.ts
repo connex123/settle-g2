@@ -18,8 +18,8 @@ export function pairing(code: string | undefined, bot: string | null): Screen {
   const c = code ? `${code.slice(0, 3)} ${code.slice(3)}` : '··· ···'
   return {
     header: 'SETTLE  ·  pair with Telegram',
-    body: `Open ${bot ? '@' + bot : 'the Settle bot'} in Telegram\nand tap  Open Settle.\n\nEnter this code:\n\n        ${c}`,
-    footer: 'Code refreshes every 10 min',
+    body: `Open ${bot ? '@' + bot : 'the Settle bot'} in Telegram,\ntap Open Settle (or send /pair code).\n\nEnter this code:\n\n        ${c}`,
+    footer: 'double-tap exit',
   }
 }
 
