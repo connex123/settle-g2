@@ -23,7 +23,11 @@ Group chats are where small debts happen: rent shares, fuel for the generator, d
    - **Swipe** moves to the next request, **double-tap** snoozes it.
 4. **Close the loop.** The transfer goes out on TON testnet with the memo as a comment. The bot replies to the original message with a receipt and a Tonviewer button, so nobody has to ask "did you send it?".
 
-Setup happens in a **Telegram Mini App** (the bot's *Open Settle* button). You pair the glasses with a 6-digit code (Google sign-in does not work in the Even WebView, and Telegram's own login is better anyway), set where you get paid, and see your limits and recent receipts. Payees can also just send `/wallet <address>` in the group.
+Setup happens in a **Telegram Mini App** (the bot's *Open Settle* button). You pair the glasses with a 6-digit code (Google sign-in does not work in the Even WebView, and Telegram's own login is better anyway), set where you get paid, and see your limits and recent receipts. The Mini App runs in two modes:
+- **Static** (default, hosted on GitHub Pages: https://connex123.github.io/settle-g2/miniapp/). The bot opens it from a keyboard button, with your state in the URL fragment. Changes go back through `Telegram.WebApp.sendData`, which Telegram delivers to the bot over the same long-polling connection, so the server needs **no inbound HTTPS at all**.
+- **Served by the Settle server** (`/miniapp/`, when `PUBLIC_URL` is set). It talks to the server API and is authenticated with `initData` (HMAC).
+
+Without the Mini App, `/pair 123456` in a private chat with the bot works too. Payees can just send `/wallet <address>` in the group.
 
 ![voice](docs/voice.png)
 
@@ -70,6 +74,8 @@ npm --prefix app run dev          # :5173
 evenhub-simulator http://localhost:5173
 ```
 Set `VITE_SETTLE_API` when building the app if the server is not on `localhost:8787`.
+
+**Live with a real bot:** put the token in `/home/box/secrets/settle-telegram-bot.token` (or `TELEGRAM_BOT_TOKEN`), set privacy mode off in @BotFather (`/setprivacy` → Disable, then re-add the bot to the group), and run `npm run server`. `scripts/run-live.sh` can add a cloudflared quick tunnel if you want the server-hosted Mini App.
 
 **No Telegram account handy?** `./scripts/dev-stack.sh` starts a local fake Telegram Bot API (with a chat view at http://localhost:8081), the server and the simulator. Then `PAYEE_ADDR=<testnet address> node scripts/sim-flow.mjs` drives the whole flow (pair, group request, tap, real testnet transfer, receipt) and saves glasses screenshots. `npm test` runs the unit tests.
 
