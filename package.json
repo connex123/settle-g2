@@ -1,0 +1,13 @@
+{
+  "name": "settle-g2",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/unit.test.mjs",
+    "server": "node server/src/index.js",
+    "app": "npm --prefix app run dev",
+    "sim": "./scripts/sim-headless.sh",
+    "dev-stack": "./scripts/dev-stack.sh",
+    "e2e": "node scripts/sim-flow.mjs"
+  }
+}
