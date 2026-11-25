@@ -50,24 +50,43 @@ button{width:100%;margin-top:10px;padding:12px;border:0;border-radius:10px;backg
 const tg = window.Telegram?.WebApp; tg?.ready(); tg?.expand()
 const initData = tg?.initData || ''
 const $ = id => document.getElementById(id)
+// Two modes. Served by the Settle server: talk to its API (auth = initData HMAC).
+// Static copy (GitHub Pages): read state the bot put in the URL, and send changes back with WebApp.sendData.
+const STATIC = location.hostname.endsWith('github.io') || location.protocol === 'file:'
 async function call(path, body = {}) {
-  const r = await fetch('/api/mini/' + path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ initData, ...body }) })
+  const r = await fetch('../api/mini/' + path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ initData, ...body }) })
   const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Request failed'); return j
+}
+function staticState() {
+  try {
+    const s = JSON.parse(atob(decodeURIComponent((location.hash.match(/s=([^&]+)/) || [])[1] || '').replace(/-/g, '+').replace(/_/g, '/')))
+    return { user: { name: tg?.initDataUnsafe?.user?.first_name || 'you' }, wallet: s.w || null, glassesPaired: s.g ? 1 : 0,
+      caps: { perPayment: s.p, perDay: s.d, spentToday: 0 }, recent: (s.r || []).map(([direction, other, amount, memo, status]) => ({ direction, other, amount, memo, status, chat: '' })) }
+  } catch { return null }
 }
 function paint(me) {
   $('who').textContent = 'Signed in with Telegram as ' + me.user.name
-  $('per').textContent = me.caps.perPayment + ' TON'; $('day').textContent = me.caps.perDay + ' TON'; $('spent').textContent = (+me.caps.spentToday).toFixed(3) + ' TON'
+  $('per').textContent = me.caps.perPayment + ' TON'; $('day').textContent = me.caps.perDay + ' TON'
+  $('spent').textContent = STATIC ? 'see the glasses' : (+me.caps.spentToday).toFixed(3) + ' TON'
   if (me.wallet) { $('addr').value = me.wallet }
   if (me.glassesPaired) $('pairmsg').innerHTML = '<p class="ok">Glasses paired ✓</p>'
   if (me.recent.length) $('recent').innerHTML = me.recent.map(r => `<div class="row"><span>${r.direction === 'out' ? 'You → ' + r.other : r.other + ' → you'} · ${r.memo || r.chat}</span><b>${r.amount} TON <small>${r.status}${r.tx ? ` · <a href="${r.tx.url}">tx</a>` : ''}</small></b></div>`).join('')
 }
-async function load() { try { paint(await call('me')) } catch (e) { $('who').innerHTML = '<span class="err">' + e.message + '</span>' } }
+async function load() {
+  if (STATIC) { const s = staticState(); if (s) paint(s); else $('who').textContent = 'Open this from the Settle bot (Open Settle button).'; return }
+  try { paint(await call('me')) } catch (e) { $('who').innerHTML = '<span class="err">' + e.message + '</span>' }
+}
+function send(data) {
+  if (!tg?.sendData) throw new Error('Open this from the Open Settle button in the bot chat.')
+  tg.sendData(JSON.stringify(data)) // the bot replies in the chat; Telegram closes the Mini App
+}
 $('pair').onclick = async () => {
-  try { paint(await call('pair', { code: $('code').value })); tg?.HapticFeedback?.notificationOccurred('success') }
+  const code = $('code').value.replace(/\D/g, '')
+  try { if (STATIC) return send({ code, address: $('addr').value.trim() || undefined }); paint(await call('pair', { code })); tg?.HapticFeedback?.notificationOccurred('success') }
   catch (e) { $('pairmsg').innerHTML = '<p class="err">' + e.message + '</p>'; tg?.HapticFeedback?.notificationOccurred('error') }
 }
 $('save').onclick = async () => {
-  try { paint(await call('wallet', { address: $('addr').value })); $('addrmsg').innerHTML = '<p class="ok">Saved ✓</p>' }
+  try { if (STATIC) return send({ address: $('addr').value.trim() }); paint(await call('wallet', { address: $('addr').value })); $('addrmsg').innerHTML = '<p class="ok">Saved ✓</p>' }
   catch (e) { $('addrmsg').innerHTML = '<p class="err">' + e.message + '</p>' }
 }
 $('code').addEventListener('input', e => { const d = e.target.value.replace(/\D/g, '').slice(0, 6); e.target.value = d.length > 3 ? d.slice(0, 3) + ' ' + d.slice(3) : d })

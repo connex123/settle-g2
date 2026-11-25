@@ -1,7 +1,7 @@
 // Telegram Bot API: long polling, group message -> payment request, receipts back to the group.
 import crypto from 'node:crypto'
 import { config } from './config.js'
-import { db, id, changed, rememberUser, userByUsername, displayName } from './store.js'
+import { db, id, changed, rememberUser, userByUsername, displayName, redeemPairCode } from './store.js'
 import { parseRequest } from './parse.js'
 import { normalizeAddress, short } from './ton.js'
 
@@ -81,19 +81,53 @@ async function onCommand(msg, cmd, arg) {
       return tg('sendMessage', { chat_id: chat, reply_parameters: { message_id: msg.message_id }, text: `Saved. Payments to ${displayName(msg.from.id)} go to ${short(a)} (testnet).` })
     } catch { return tg('sendMessage', { chat_id: chat, text: 'That is not a valid TON address.' }) }
   }
+  if (cmd === '/pair') {
+    if (msg.chat.type !== 'private') return tg('sendMessage', { chat_id: chat, text: 'Send /pair <code> to me in a private chat.' })
+    const sid = redeemPairCode(arg, msg.from)
+    return tg('sendMessage', { chat_id: chat, text: sid ? 'Glasses paired. Requests that name you will show up on your G2.' : 'Code not found or expired. Check the code on your glasses.' })
+  }
   if (cmd === '/start' || cmd === '/help' || cmd === '/settle') {
-    const kb = config.publicUrl && msg.chat.type === 'private'
-      ? { reply_markup: { inline_keyboard: [[{ text: 'Open Settle', web_app: { url: `${config.publicUrl}/miniapp/` } }]] } } : {}
+    const kb = miniAppUrl() && msg.chat.type === 'private'
+      ? { reply_markup: { keyboard: [[{ text: 'Open Settle', web_app: { url: miniAppUrl(msg.from.id) } }]], resize_keyboard: true } } : {}
     return tg('sendMessage', {
       chat_id: chat,
       text: 'Settle puts money requests from your Telegram groups on your Even G2 glasses. One glance, one tap, paid on TON (testnet), receipt posted back here.\n\n' +
-        '1. Open Settle on the glasses and pair with the code it shows (button below).\n2. Add me to a group and ask: "@friend you owe me 1.5 TON for dinner".\n3. Set where you get paid: /wallet <TON testnet address>',
+        '1. Open Settle on the glasses and pair with the code it shows: tap Open Settle below, or send /pair <code>.\n2. Add me to a group and ask: "@friend you owe me 1.5 TON for dinner".\n3. Set where you get paid: /wallet <TON testnet address>',
       ...kb,
     })
   }
 }
 
+// Mini App URL. A static copy (GitHub Pages) works with no inbound HTTPS: it returns data via WebApp.sendData.
+export function miniAppUrl(uid) {
+  const base = config.miniAppUrl || (config.publicUrl ? `${config.publicUrl}/miniapp/` : '')
+  if (!base || uid == null) return base
+  const me = { w: db().wallets[uid] || '', p: config.maxPerPaymentTon, d: config.maxPerDayTon,
+    r: db().requests.filter(r => r.payerId === uid || r.payeeId === uid).slice(-5).reverse()
+      .map(r => [r.payerId === uid ? 'out' : 'in', displayName(r.payerId === uid ? r.payeeId : r.payerId), r.amount, r.memo, r.status]),
+    g: Object.values(db().sessions).some(s => s.tgUserId === uid) }
+  return `${base}#s=${encodeURIComponent(Buffer.from(JSON.stringify(me)).toString('base64url'))}`
+}
+
+async function onWebAppData(msg) {
+  let d; try { d = JSON.parse(msg.web_app_data.data) } catch { return }
+  const chat = msg.chat.id
+  const out = []
+  if (d.code) out.push(redeemPairCode(d.code, msg.from) ? 'Glasses paired ✓' : 'Pairing code not found or expired.')
+  if (d.address) {
+    try { db().wallets[msg.from.id] = normalizeAddress(d.address); changed(); out.push(`Payout address saved: ${short(db().wallets[msg.from.id])} (testnet) ✓`) }
+    catch { out.push('That is not a valid TON address.') }
+  }
+  if (out.length) return tg('sendMessage', { chat_id: chat, text: out.join('\n'), reply_markup: { keyboard: [[{ text: 'Open Settle', web_app: { url: miniAppUrl(msg.from.id) } }]], resize_keyboard: true } })
+}
+
 export async function handleUpdate(u) {
+  if (u.my_chat_member) {
+    const c = u.my_chat_member.chat, st = u.my_chat_member.new_chat_member?.status
+    db().chats ||= {}; db().chats[c.id] = { title: c.title || '', type: c.type, status: st, at: Date.now() }; changed()
+    console.log(`[tg] bot ${st} in ${c.type} "${c.title || ''}"`)
+    return
+  }
   const msg = u.message
   if (!msg?.from) return
   rememberUser(msg.from)
@@ -101,7 +135,8 @@ export async function handleUpdate(u) {
   if (msg.reply_to_message?.from) rememberUser(msg.reply_to_message.from)
   for (const e of msg.entities || []) if (e.type === 'text_mention' && e.user) rememberUser(e.user)
   const isGroup = msg.chat.type === 'group' || msg.chat.type === 'supergroup'
-  if (isGroup) seen(msg.chat.id, msg.from.id)
+  if (isGroup) { seen(msg.chat.id, msg.from.id); db().chats ||= {}; db().chats[msg.chat.id] ||= { title: msg.chat.title, type: msg.chat.type, status: 'member', at: Date.now() } }
+  if (msg.web_app_data) return onWebAppData(msg)
   const text = msg.text || ''
   const m = text.match(/^(\/[a-z_]+)(?:@\w+)?\s*(.*)$/is)
   if (m) return onCommand(msg, m[1].toLowerCase(), m[2].trim())
@@ -127,11 +162,17 @@ export async function startPolling() {
   if (!config.botToken) { console.log('[tg] no bot token, Telegram disabled'); return }
   botInfo = await tg('getMe')
   console.log(`[tg] polling as @${botInfo.username}`)
-  if (config.publicUrl) tg('setChatMenuButton', { menu_button: { type: 'web_app', text: 'Settle', web_app: { url: `${config.publicUrl}/miniapp/` } } }).catch(e => console.log('[tg] menu', e.message))
+  if (miniAppUrl()) tg('setChatMenuButton', { menu_button: { type: 'web_app', text: 'Settle', web_app: { url: miniAppUrl() } } }).catch(e => console.log('[tg] menu', e.message))
+  tg('setMyCommands', { commands: [
+    { command: 'start', description: 'What Settle does + open the Mini App' },
+    { command: 'pair', description: 'Pair your glasses: /pair 123456' },
+    { command: 'wallet', description: 'Set where you get paid: /wallet <TON testnet address>' },
+  ] }).catch(() => {})
+  tg('setMyDescription', { description: 'Settle puts money requests from your Telegram groups on your Even G2 glasses. One glance, one tap, paid on TON (testnet), receipt posted back to the group.' }).catch(() => {})
   let offset = 0
   for (;;) {
     try {
-      const ups = await tg('getUpdates', { offset, timeout: 25, allowed_updates: ['message'] })
+      const ups = await tg('getUpdates', { offset, timeout: 25, allowed_updates: ['message', 'my_chat_member'] })
       for (const u of ups) { offset = u.update_id + 1; await handleUpdate(u).catch(e => console.log('[tg] handler', e.message)) }
     } catch (e) { console.log('[tg] poll', e.message); await new Promise(r => setTimeout(r, 3000)) }
   }

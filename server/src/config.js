@@ -11,7 +11,8 @@ const readSecret = (name, envName) => {
 
 export const config = {
   port: Number(process.env.PORT || 8787),
-  publicUrl: (process.env.PUBLIC_URL || '').replace(/\/$/, ''), // HTTPS origin for the Mini App
+  publicUrl: (process.env.PUBLIC_URL || '').replace(/\/$/, ''), // HTTPS origin of this server (optional)
+  miniAppUrl: process.env.SETTLE_MINIAPP_URL || 'https://connex123.github.io/settle-g2/miniapp/', // static Mini App (sendData mode)
   botToken: readSecret('settle-telegram-bot.token', 'TELEGRAM_BOT_TOKEN'),
   tonMnemonic: readSecret('settle-ton-testnet.mnemonic', 'TON_MNEMONIC'),
   toncenterKey: readSecret('settle-toncenter.key', 'TONCENTER_API_KEY'),
